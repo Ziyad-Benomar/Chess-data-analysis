@@ -1,4 +1,5 @@
 # Chess-data-analysis
+(March - June 2020)
 Creating and visualizing graphs with Neo4j and Gephi to extract relevant information from a chess databasse
 (The project's report and presentation are written in french)
 
