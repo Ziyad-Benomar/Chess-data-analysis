@@ -1,0 +1,235 @@
+//                          #### Chess data analysis and visualization ####
+
+
+// ## Creating the graph :
+
+//- Opening nodes :
+//-------------------------------------------------------
+LOAD CSV WITH HEADERS FROM "file:///openings.csv" AS row
+MERGE (o1:Opening {move : row.first})
+	ON CREATE SET o1.weight = 0
+CREATE (o2:Opening {move : row.second, weight : 0})
+CREATE (o1)-[:THEN]->(o2)
+//-------------------------------------------------------
+
+//- Player nodes : 
+//-------------------------------------------------------
+LOAD CSV WITH HEADERS FROM "file:///players.csv" AS row
+CREATE (p:Player)
+SET p.id=row.id, 
+	p.games_number=toInteger(row.games_number),
+    p.initial_ELO=toInteger(row.initial_ELO),
+    p.final_ELO=toInteger(row.final_ELO),
+    p.delta_ELO=toInteger(row.delta_ELO)
+//-------------------------------------------------------
+
+//- Game nodes + relationship edges :
+//-------------------------------------------------------
+LOAD CSV WITH HEADERS FROM "file:///games.csv" AS row
+MATCH 	(wp:Player{id:row.white}),
+		(bp:Player{id:row.black}),
+		(o2:Opening{move:row.opening})<-[:THEN]-(o1)
+
+CREATE (g:Game)
+SET g.id=row.id,
+	g.white_ELO=toInteger(row.white_ELO),
+	g.black_ELO=toInteger(row.black_ELO),
+	g.length=toInteger(row.length)
+
+CREATE (g)-[:BEGINNED]->(o2)
+SET o2.weight=o2.weight+1
+SET o1.weight=o1.weight+1
+
+FOREACH (index in 
+	CASE
+   	WHEN row.result="1-0" 
+   	THEN [1] 
+   	ELSE [] 
+   	END |	CREATE (wp)-[:WON {color:"white"}]->(g)
+			CREATE (bp)-[:LOST {color:"black"}]->(g)
+	)
+FOREACH (index in 
+	CASE
+   	WHEN row.result="0-1"
+   	THEN [1] 
+   	ELSE [] 
+   	END |	CREATE (wp)-[:LOST {color:"white"}]->(g)
+		 	CREATE (bp)-[:WON {color:"black"}]->(g)
+	)
+FOREACH (index in 
+	CASE
+   	WHEN row.result="1/2-1/2"
+   	THEN [1] 
+   	ELSE [] 
+   	END |	CREATE (wp)-[:DRAW {color:"white"}]->(g)
+		 	CREATE (bp)-[:DRAW {color:"black"}]->(g)
+	)
+//-------------------------------------------------------
+
+
+//## Some elementary queries :
+
+//1 - Average duration of a game :
+//-------------------------------------------------------
+// Average duration of a game
+
+MATCH (g:Game) RETURN AVG(g.length)
+
+// Average duration of a draw
+
+MATCH (:Player)-[:DRAW]-(g:Game) RETURN AVG(g.length)
+//-------------------------------------------------------
+
+//2 - Average ELO level :
+//-------------------------------------------------------
+MATCH (p:Player) RETURN AVG(p.initial_ELO)
+//-------------------------------------------------------
+
+
+//## Openings :
+
+//1 - Common opening :
+//-------------------------------------------------------
+// most played by professionals
+//-------------------------------------------------------
+
+MATCH (o:Opening)
+WITH o
+MATCH (g:Game)-[:BEGINNED]->(o)
+// WHERE g.white_ELO > 2000
+WITH o, COUNT(g) as numGames
+RETURN o.move,  numGames ORDER BY numGames DESC
+
+
+//2 - Most prefered opening :
+//-------------------------------------------------------
+// Creating the relationships PREFERS
+
+// STEP 1	: -----------------------------------------
+
+MATCH (p:Player)-[]-(g:Game)-[:BEGINNED]-(o:Opening) 
+WITH p, o, COUNT(g) as num_games 
+CREATE (p)-[e:NBGames]->(o) SET e.weight = num_games
+
+// STEP 2	: -----------------------------------------
+
+MATCH (p:Player)-[e:NBGames]-(o:Opening)
+WHERE NOT EXISTS { 
+	MATCH (p)-[e1:NBGames]-(o1:Opening)
+	WHERE e.weight<e1.weight
+} AND NOT EXISTS{
+	MATCH (p)-[e1:NBGames]-(o1:Opening)
+	WHERE e.weight=e1.weight AND o.move > o1.move
+}
+CREATE (p)-[:PREFERS {weight:e.weight}]->(o)
+
+// STEP 3	: -----------------------------------------
+
+MATCH (p)-[e:NBGames]->(o) DELETE e
+
+//-------------------------------------------------------
+// the most prefered opening
+//-------------------------------------------------------
+
+MATCH (o:Opening) WHERE o.weight > 1000
+WITH o
+MATCH (p:Player)-[:PREFERS]-(o)
+// WHERE p.initial_ELO > 1800
+WITH o, AVG(p.final_ELO) as avgELO
+RETURN o.move, avgELO ORDER BY avgELO DESC
+//-------------------------------------------------------
+
+
+//3 - Best opening to improve your ELO :
+//-------------------------------------------------------
+MATCH (o:Opening) WHERE o.weight > 500
+WITH o
+MATCH (p:Player)-[:PREFERS]-(o)
+WITH o, AVG(p.delta_ELO) as avgDeltaELO
+RETURN o.move, avgDeltaELO ORDER BY avgDeltaELO DESC
+
+// Avg for beginners -----------------------------
+
+MATCH (o:Opening) WHERE o.weight > 500
+WITH o
+MATCH (p:Player)-[:PREFERS]-(o) 
+WHERE p.initial_ELO < 1500 AND p.games_number>10
+WITH o, AVG(p.delta_ELO) as avgDeltaELO
+RETURN o.move, avgDeltaELO ORDER BY avgDeltaELO DESC
+//-------------------------------------------------------
+
+//4 - Offensive - defensive opening :
+//-------------------------------------------------------
+MATCH (o:Opening) WHERE o.weight > 500
+WITH o
+MATCH (g:Game)-[:BEGINNED]-(o)
+WITH o, AVG(g.white_ELO - g.black_ELO) as avgDiffELO
+RETURN o.move, avgDiffELO ORDER BY avgDiffELO DESC
+//-------------------------------------------------------
+
+//## PLayers clustering :
+
+//1 - Automatic clustering:
+-------------------------------------------------------
+// Création de PLAYED_WITH
+
+MATCH (p:Player)-[]-(g:Game)-[]-(q:Player)
+WHERE p.id < q.id
+CREATE (p)-[:PLAYED_WITH]->(q)
+
+//-------------------------------------------------------
+
+//2 - Correlation with the ELO level :
+//-------------------------------------------------------
+// Average ELO difference among games
+
+MATCH (g:Game) RETURN AVG(g.white_ELO - g.black_ELO)
+
+// Correlation between delta_ELO and games_number ?
+
+MATCH (p:Player)
+Return p.delta_ELO, p.games_number ORDER BY p.delta_ELO DESC
+//-------------------------------------------------------
+
+// 3 - Play against better players ? :
+//-------------------------------------------------------
+
+MATCH (p:Player)
+WHERE p.initial_ELO<1500 AND p.games_number>5
+WITH p
+MATCH (q:Player)-[]-(g:Game)-[]-(p)
+RETURN p.delta_ELO, AVG(q.initial_ELO-p.initial_ELO) ORDER BY p.delta_ELO DESC LIMIT 100
+//-------------------------------------------------------
+
+//We can delete the PREFERS relationships now (won't be needed later)
+
+MATCH (:Player)-[r:PLAYED-WITH]-(:Player) DELETE r
+
+//-------------------------------------------------------
+
+//## Predict the result of a game:
+
+//-------------------------------------------------------
+// Calculation of win rate + rate based on openings
+//-------------------------------------------------------
+// Add the properties diff_ELO and winner to the GAME nodes (run these queries separately)
+
+MATCH (g:Game) SET g.diff_ELO=toInteger(g.white_ELO-g.black_ELO)
+
+MATCH (p:Player)-[r:WON]-(g:Game) SET g.winner=r.color
+
+// For each opening o, compute the rate of games beginning with o where diff_ELO > SEUIL and where the white player wins
+
+MATCH (o:Opening) WHERE o.weight > 200
+WITH o
+MATCH (g:Game)-[:BEGINNED]-(o)
+WHERE g.white_ELO-g.black_ELO > 20 // Remplacer 20 par un SEUIL de votre choix
+WITH o, COUNT(g) as denominateur
+MATCH (g:Game)-[:BEGINNED]-(o)
+WHERE g.white_ELO-g.black_ELO > 20 // Remplacer 20 par un SEUIL de votre choix
+	  AND g.winner = "black"
+WITH o, denominateur, COUNT(g) as numerateur
+RETURN o.move, 1 - toFloat(numerateur)/toFloat(denominateur) as taux ORDER BY taux DESC
+
+
+
