@@ -3,7 +3,9 @@
 Creating and visualizing graphs with Neo4j and Gephi to extract relevant information from a chess database
 (The project's report and presentation are written in french)
 
-We used databases from https://database.lichess.org/
+We used databases from   
+https://database.lichess.org/  
+
 The objective is to deduce improvement strategies and advice for beginner players.
 
 In this project, we will
